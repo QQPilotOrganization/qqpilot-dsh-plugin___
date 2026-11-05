@@ -408,6 +408,34 @@ await scenario('tool mode: array reply keeps images', async () => {
   assert.equal(result.body.choices[0].message.images.length, 1)
 })
 
+await scenario('tool mode: JSON-array string from weaker models is split', async () => {
+  const { routes } = await loadPlugin([
+    toolCallChunks('call_jsonarr', 'qqpilot_reply', { text: '["Hello!", "晚安!", "萌!"]' }),
+  ])
+  const result = await post(routes, '/qqpilot/v1/chat/completions', qqpilotBody('说三条'))
+  assert.equal(result.body.choices[0].message.content, 'Hello![[NEXT]]晚安![[NEXT]]萌!')
+  const feed = await get(routes, '/qqpilot/api/activity', 'since=0')
+  assert.equal(feed.body.activity[0].messages, 3)
+})
+
+await scenario('tool mode: nested JSON-array string is flattened', async () => {
+  const { routes } = await loadPlugin([
+    toolCallChunks('call_jsonarr2', 'qqpilot_reply', { text: '[["打招呼", "说晚安", "卖萌"]]' }),
+  ])
+  const result = await post(routes, '/qqpilot/v1/chat/completions', qqpilotBody('再来三条'))
+  assert.equal(result.body.choices[0].message.content, '打招呼[[NEXT]]说晚安[[NEXT]]卖萌')
+  const feed = await get(routes, '/qqpilot/api/activity', 'since=0')
+  assert.equal(feed.body.activity[0].messages, 3)
+})
+
+await scenario('tool mode: ordinary bracketed text is not JSON-split', async () => {
+  const { routes } = await loadPlugin([
+    toolCallChunks('call_brackets', 'qqpilot_reply', { text: '[图片] 我来了喵' }),
+  ])
+  const result = await post(routes, '/qqpilot/v1/chat/completions', qqpilotBody('你好'))
+  assert.equal(result.body.choices[0].message.content, '[图片] 我来了喵')
+})
+
 await scenario('compatibility mode: no tools, direct text returned', async () => {
   const { routes, llm } = await loadPlugin([textChunks('兼容模式输出')])
   const set = await post(routes, '/qqpilot/api/config', { compatibilityMode: true })
