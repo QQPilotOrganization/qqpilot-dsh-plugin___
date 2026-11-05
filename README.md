@@ -33,7 +33,8 @@ QQPilot ──POST /qqpilot/v1/chat/completions──▶ 本插件（DSH Host）
   - **兼容模式（compat）**：不给工具，直接把模型输出作为回复返回，适合不支持 tool calling 的模型。
   - **静默模式（silent）**：不调用模型、不消耗 token，只把收到的消息记录到聊天动态里（观察/挂机用）。
 - **智能体工具（工具模式）**
-  - `qqpilot_reply`：模型决定回复时调用；参数 `text`（正文）与 `images`（图片路径 / http(s) URL / data URL）。
+  - `qqpilot_reply`：模型决定回复时调用；参数 `text`（正文，**字符串或字符串数组**）与 `images`（图片路径 / http(s) URL / data URL）。
+  - **一次回复多条消息**：`text` 传字符串数组时，数组每一项会作为一条独立的 QQ 消息，插件用 `[[NEXT]]` 拼接后返回给 QQPilot（QQPilot 会逐条发送）；字符串里的 `[[NEXT]]` 也会被展开成多条。
   - `qqpilot_do_not_reply`：模型决定保持沉默时调用，插件返回空 `content`，QQPilot 跳过发送。
   - 模型没有调用工具而是直接输出文本时，文本仍然会作为回复返回（不会因模型“忘记调工具”而丢消息）。
   - 多轮工具循环上限可配置；工具调用失败时可自动回退到兼容输出。
@@ -132,6 +133,7 @@ remote_server_timeout = 300
 > 模型列表通过 DSH `llm` 服务的 `listProviders()` / `listModels()` 实时读取；某个 provider 读取失败会在设置页提示。
 > 不同模型能力差异较大：工具调用建议使用支持 tool calling 的模型（如 DeepSeek 系列）；本地小模型（1B 级）在
 > 多工具场景下可能很慢甚至超时，可把 DSH 工具策略设为「关闭」或改用更大模型。
+> 「一次多条消息」依赖模型愿意按数组输出；DeepSeek 系列实测可稳定遵循，小模型可能只回单条（仍可正常发送）。
 
 ## 配置项
 
@@ -179,8 +181,11 @@ remote_server_timeout = 300
 ## 与 QQPilot 的输出约定
 
 - `choices[0].message.content` 必须是**字符串**；空字符串表示这次不回复（QQPilot 会静默跳过）。
-- 回复文本会被 QQPilot 按 `[[NEXT]]` 拆成多条消息、按 `\n` 每行拆成一条消息，并硬截断到 500 字符。
-  所以模型输出应是纯文本、不要依赖 Markdown 换行排版。
+- **多条消息**：`qqpilot_reply.text` 可以是字符串数组，插件会按顺序用 `[[NEXT]]` 拼接；QQPilot 对 `[[NEXT]]`
+  分段后每段单独按一次 `Ctrl+Enter` 发送，所以数组里每一项就是一条 QQ 消息（`gui_operation.rs` 的 `send_text`）。
+- QQPilot 还会把回复里的 `\n` 逐行发送（段内换行也会变成多条消息），因此**单条消息内部不要用换行**；
+  想发多条消息请用数组或 `[[NEXT]]`，不要依赖换行。
+- 回复文本会被 QQPilot 硬截断到 500 字符（按 Unicode 字符计），图片会在文本之后上传。
 - 图片放在非标准扩展字段 `choices[0].message.images[]`，值必须是 `data:image/<ext>;base64,...` data URL；
   文本为空时 QQPilot 不会上传图片，因此插件会在“只有图片”时补 caption。
 - 更精确的协议依据（源码行号、字段硬性要求、失败时的静默行为）见 [PROTOCOL.md](docs/PROTOCOL.md)。
@@ -274,6 +279,17 @@ node test/verify.mjs --url http://127.0.0.1:55068/qqpilot/v1
 | 恢复默认 | POST `{provider:"",model:""}` 后 `modelSource=default`，当前默认 `llamacpp/MiniCPM5-1B-F16.gguf` |
 | 持久化 | `provider` / `model` / `reasoningEffort` 写入 `~/.dsh/qqpilot-dsh-plugin.json` |
 | 离线单测 | 新增模型目录 + 指定/恢复模型场景，全部 PASS |
+
+### 第五轮（一次输出多条消息）
+
+| 检查 | 结果 |
+|---|---|
+| 工具参数 | `qqpilot_reply.text` 支持 `string \| string[]`（JSON Schema `oneOf`） |
+| 落库/返回 | 数组按顺序转成 `[[NEXT]]` 拼接的 `choices[0].message.content`；空字符串/空白项被丢弃；数组与 `[[NEXT]]` 混用会被展开 |
+| 联机实测 | 使用默认模型 `deepseek-account/deepseek-flash`，要求“一次回复三条独立消息”：返回 3 段 `[[NEXT]]`（打招呼 / 时间 / 卖萌），1.2s，活动记录 `messages=3` |
+| 图片组合 | 数组文本 + images 同一回复时，文本多段 + 图片数组均正常返回（单测覆盖） |
+| 兼容性 | 旧的单字符串写法、`[[NEXT]]` 写法、图片回复、工具调用全部回归通过 |
+| 离线单测 | 数组、数组+`[[NEXT]]`、数组+图片 三个新场景 PASS |
 
 ## License
 

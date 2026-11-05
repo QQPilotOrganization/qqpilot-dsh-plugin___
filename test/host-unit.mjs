@@ -374,6 +374,40 @@ await scenario('model catalog and provider/model override', async () => {
   assert.equal(reset.body.config.provider, 'deepseek-official')
 })
 
+await scenario('tool mode: text array becomes multiple [[NEXT]] messages', async () => {
+  const { routes } = await loadPlugin([
+    toolCallChunks('call_multi', 'qqpilot_reply', { text: ['第一句话', '第二句话', '第三句话'] }),
+  ])
+  const result = await post(routes, '/qqpilot/v1/chat/completions', qqpilotBody('多说几句'))
+  assert.equal(result.status, 200)
+  assert.equal(result.body.choices[0].message.content, '第一句话[[NEXT]]第二句话[[NEXT]]第三句话')
+  const feed = await get(routes, '/qqpilot/api/activity', 'since=0')
+  assert.equal(feed.body.activity[0].messages, 3)
+})
+
+await scenario('tool mode: mixed array and [[NEXT]] markers flatten to messages', async () => {
+  const { routes } = await loadPlugin([
+    toolCallChunks('call_mix', 'qqpilot_reply', { text: ['第一段[[NEXT]]第二段', '   ', '第三段'] }),
+  ])
+  const result = await post(routes, '/qqpilot/v1/chat/completions', qqpilotBody('再来'))
+  assert.equal(result.status, 200)
+  assert.equal(result.body.choices[0].message.content, '第一段[[NEXT]]第二段[[NEXT]]第三段')
+  const feed = await get(routes, '/qqpilot/api/activity', 'since=0')
+  assert.equal(feed.body.activity[0].messages, 3)
+})
+
+await scenario('tool mode: array reply keeps images', async () => {
+  const png =
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+  const { routes } = await loadPlugin([
+    toolCallChunks('call_multi_img', 'qqpilot_reply', { text: ['先发文字', '再发一条'], images: [png] }),
+  ])
+  const result = await post(routes, '/qqpilot/v1/chat/completions', qqpilotBody('多图多文'))
+  assert.equal(result.status, 200)
+  assert.equal(result.body.choices[0].message.content, '先发文字[[NEXT]]再发一条')
+  assert.equal(result.body.choices[0].message.images.length, 1)
+})
+
 await scenario('compatibility mode: no tools, direct text returned', async () => {
   const { routes, llm } = await loadPlugin([textChunks('兼容模式输出')])
   const set = await post(routes, '/qqpilot/api/config', { compatibilityMode: true })
