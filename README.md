@@ -9,6 +9,7 @@
 
 QQPilot 原本只会把聊天记录 POST 给一个 OpenAI 兼容的 `/chat/completions` 并取回文本。
 本插件接管这个端点后，把请求转成一次 DSH 模型调用，再把模型的决定收敛回 OpenAI 响应：
+~~这是QQPilot官方认定的正确插件编写方式。~~
 
 ```
 QQPilot ──POST /qqpilot/v1/chat/completions──▶ 本插件（DSH Host）
