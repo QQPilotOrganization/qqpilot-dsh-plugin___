@@ -323,6 +323,7 @@ node test/verify.mjs --url http://127.0.0.1:55068/qqpilot/v1
 | 非法路径 | 指向普通文件 → `ok:false`「工作空间路径不是目录」；清空 → 恢复跟随 DSH 工作区 |
 | 工具调用回归 | DSH 0.2.2 的批量 executor API 适配后，`read` 自测 2ms 成功（兼容 0.2.1 单调用 API） |
 | 持久化 | `maxToolRounds` / `workspaceRoot` 写入 `~/.dsh/qqpilot-dsh-plugin.json`，重启后保留 |
+| 设置页修复 | 修复「工具与工作区」卡片引用未定义的 `roundsDraft` / `workspaceDraft` / `workspaceNotice`（应为 `props.*`），并加 ErrorBoundary：以后渲染异常显示提示而不是整页空白 |
 
 > 若插件热更新时设置页一片空白：这是旧页面里 React 组件实例与新版 hooks 不匹配导致的，刷新页面即可恢复；
 > 新版客户端已加 ErrorBoundary（异常会显示红色提示而不是空白）并把未捕获错误上报到 `/qqpilot/api/client-errors`。
