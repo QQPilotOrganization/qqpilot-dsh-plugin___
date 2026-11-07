@@ -566,5 +566,17 @@ await scenario('invalid request is refused with 400', async () => {
   assert.ok(result.body.error && result.body.error.message.includes('messages'))
 })
 
+await scenario('client error reporting endpoint records diagnostics', async () => {
+  const { routes } = await loadPlugin([textChunks('x')])
+  const sent = await post(routes, '/qqpilot/api/client-error', { source: 'settings', message: 'boom', stack: 'at test' })
+  assert.equal(sent.status, 200)
+  assert.equal(sent.body.ok, true)
+  const list = await get(routes, '/qqpilot/api/client-errors')
+  assert.equal(list.body.ok, true)
+  assert.equal(list.body.errors.length, 1)
+  assert.equal(list.body.errors[0].source, 'settings')
+  assert.equal(list.body.errors[0].message, 'boom')
+})
+
 console.log(failures === 0 ? '\nALL HOST-UNIT SCENARIOS PASSED' : `\n${failures} SCENARIO(S) FAILED`)
 process.exit(failures === 0 ? 0 : 1)

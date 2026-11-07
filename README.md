@@ -193,6 +193,8 @@ remote_server_timeout = 300
 | `GET /qqpilot/api/tools` | DSH 工具桥诊断：策略、可见工具、专用 bridge agent、全局/作用域工具 |
 | `POST /qqpilot/api/tools/test` | 通过真实工具管线执行一次 `read`（读插件自身 package.json），验证 DSH 工具调用链路 |
 | `GET /qqpilot/api/models` | 模型目录：DSH provider/model 列表、当前默认选择、生效模型 |
+| `POST /qqpilot/api/client-error` | 浏览器端渲染/未捕获错误上报（写入宿主日志） |
+| `GET /qqpilot/api/client-errors` | 最近 20 条浏览器端错误（排查设置页空白用） |
 
 ## 与 QQPilot 的输出约定
 
@@ -224,6 +226,7 @@ node test/verify.mjs --url http://127.0.0.1:55068/qqpilot/v1
 | 现象 | 可能原因 |
 |---|---|
 | 设置页显示“加载失败” | 插件未加载 / 路由未注册；看宿主日志有无 `[qqpilot]` 报错 |
+| **设置页空白 / 页签消失** | 插件热更新后旧组件实例与新版 hooks 不一致（或渲染异常）。**刷新 DSH 页面（F5 / Ctrl+R）**即可重新挂载；新版已加错误边界，异常时会显示提示而不空白。若仍异常，打开 `http://127.0.0.1:<端口>/qqpilot/api/client-errors` 查看上报的客户端错误 |
 | QQPilot 端“机器人不理人” | `server_url` 写错（多了 `/`、端口不对）；模型调用报错被记为 500；看宿主日志 `[qqpilot] 请求处理失败` |
 | 模型总是沉默 | 工具模式提示词让模型判断“不必插话”；可换成兼容性模式，或在 `extraInstructions` 里要求更积极回复 |
 | 图片没发出去 | 图片路径不在 `imageRoots` / 工作区内；图片超过 `maxImageBytes`；模型只给了文本 |
@@ -320,6 +323,9 @@ node test/verify.mjs --url http://127.0.0.1:55068/qqpilot/v1
 | 非法路径 | 指向普通文件 → `ok:false`「工作空间路径不是目录」；清空 → 恢复跟随 DSH 工作区 |
 | 工具调用回归 | DSH 0.2.2 的批量 executor API 适配后，`read` 自测 2ms 成功（兼容 0.2.1 单调用 API） |
 | 持久化 | `maxToolRounds` / `workspaceRoot` 写入 `~/.dsh/qqpilot-dsh-plugin.json`，重启后保留 |
+
+> 若插件热更新时设置页一片空白：这是旧页面里 React 组件实例与新版 hooks 不匹配导致的，刷新页面即可恢复；
+> 新版客户端已加 ErrorBoundary（异常会显示红色提示而不是空白）并把未捕获错误上报到 `/qqpilot/api/client-errors`。
 
 ## License
 
