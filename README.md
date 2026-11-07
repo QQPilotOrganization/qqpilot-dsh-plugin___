@@ -147,6 +147,7 @@ remote_server_timeout = 300
 - **工作空间路径**：桥接 AI 使用的目录（`workspaceRoot`）。
   - 留空 = 跟随 DSH 当前工作区；
   - 填绝对路径（相对路径按 DSH 进程目录解析），保存时会校验/自动创建目录；
+  - 也可点「**选择目录…**」直接调起系统目录选择器（DSH Client `uiWorkspace.pickDirectory`），选完点「保存工作空间」生效；
   - 生效范围：`qqpilot-bridge` Agent 的工作目录（read/write/glob 等相对路径）、本地图片路径的允许根目录；
   - 保存后立即应用到已存在的 bridge Agent（`workingDirectory.set`），无需重启。
 
@@ -324,6 +325,7 @@ node test/verify.mjs --url http://127.0.0.1:55068/qqpilot/v1
 | 工具调用回归 | DSH 0.2.2 的批量 executor API 适配后，`read` 自测 2ms 成功（兼容 0.2.1 单调用 API） |
 | 持久化 | `maxToolRounds` / `workspaceRoot` 写入 `~/.dsh/qqpilot-dsh-plugin.json`，重启后保留 |
 | 设置页修复 | 修复「工具与工作区」卡片引用未定义的 `roundsDraft` / `workspaceDraft` / `workspaceNotice`（应为 `props.*`），并加 ErrorBoundary：以后渲染异常显示提示而不是整页空白 |
+| 目录选择器 | 工作空间路径旁新增「选择目录…」按钮，调用 DSH `uiWorkspace.pickDirectory()` 打开系统目录选择器，回填路径后保存 |
 
 > 若插件热更新时设置页一片空白：这是旧页面里 React 组件实例与新版 hooks 不匹配导致的，刷新页面即可恢复；
 > 新版客户端已加 ErrorBoundary（异常会显示红色提示而不是空白）并把未捕获错误上报到 `/qqpilot/api/client-errors`。
