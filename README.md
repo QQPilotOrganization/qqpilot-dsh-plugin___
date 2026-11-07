@@ -43,6 +43,7 @@ QQPilot ──POST /qqpilot/v1/chat/completions──▶ 本插件（DSH Host）
   - **设置页 → 聊天动态**：完整记录视图，支持暂停刷新、查看耗时/token/工具调用与错误。
 - **可调用 DSH 工具**：工具模式下可把 DSH 的工具（默认只读 + 联网：`read` / `glob` / `grep` / `read_image` / `web_search` / `web_fetch`）一并提供给桥接后的 AI；AI 可先查资料/读文件，再用 `qqpilot_reply` 回复。可在设置页选择「关闭 / 安全 / 全部」策略，危险工具（`pwsh` / `bash` / `write` / `edit` / `subagent` / `workflow` / `plugin_manager`）默认拒绝。
 - **模型选择**：默认跟随 DSH 全局默认模型；设置页「模型」卡片可改为仅 QQPilot 指定的 provider/model（下拉框，保存后下一轮生效），也可在 `cordis.patch.yml` 固定。
+- **工具与工作区设置**：设置页可直接修改「工具轮数上限」（1-32）和桥接 AI 的「工作空间」目录；工作空间用于 DSH 工具（read/写文件等）、相对路径与本地图片路径。
 - **返回图片**：回复图片会被规范化成 `data:image/...;base64,...` 放进
   `choices[0].message.images[].image_url.url`（QQPilot 唯一稳妥的图片返回形式）；仅有图片没有文本时会自动
   补一个短 caption，避免 QQPilot 把整条回复当作空内容跳过。
@@ -137,6 +138,18 @@ remote_server_timeout = 300
 > 若使用本地小模型（如 MiniCPM5-1B）并希望多条消息，建议切到**兼容模式**，在 `system.txt` / 附加指令里要求
 > 用 `[[NEXT]]` 或换行分隔——QQPilot 会把它们逐条发送。
 
+## 工具轮数与工作空间
+
+在 **DSH 设置 → QQPilot 接入 → 设置 →「工具与工作区」**：
+
+- **工具轮数上限（1-32）**：模型一次回复里最多进行几轮工具调用。默认 4；调大可以让 AI 多查几轮资料，
+  但更慢、更费 token。保存后下一轮请求生效。
+- **工作空间路径**：桥接 AI 使用的目录（`workspaceRoot`）。
+  - 留空 = 跟随 DSH 当前工作区；
+  - 填绝对路径（相对路径按 DSH 进程目录解析），保存时会校验/自动创建目录；
+  - 生效范围：`qqpilot-bridge` Agent 的工作目录（read/write/glob 等相对路径）、本地图片路径的允许根目录；
+  - 保存后立即应用到已存在的 bridge Agent（`workingDirectory.set`），无需重启。
+
 ## 配置项
 
 `cordis.patch.yml` 中 `config:` 支持以下字段（设置页暴露运行模式与附加指令）：
@@ -148,7 +161,8 @@ remote_server_timeout = 300
 | `provider` / `model` | 空 | 空 = 跟随 DSH 默认模型；也可在这里给默认值（设置页「模型」卡片可覆盖） |
 | `reasoningEffort` | 空 | 推理强度，空 = 跟随服务商默认 |
 | `extraInstructions` | 空 | 追加到系统指令里的额外要求（三种模式都生效） |
-| `maxToolRounds` | `4` | 工具循环最大轮数 |
+| `maxToolRounds` | `4` | 工具循环最大轮数（1-32，设置页「工具与工作区」可改） |
+| `workspaceRoot` | 空 | 桥接 AI 的工作空间目录；空 = 跟随 DSH 当前工作区；设置页可改，目录不存在会自动创建 |
 | `dshTools` | `safe` | 是否向桥接后的 AI 提供 DSH 工具：`off` / `safe`（只读+联网）/ `all`（除危险工具外全部） |
 | `dshToolDeny` | `["pwsh","bash","write","edit","subagent","workflow","plugin_manager"]` | 始终拒绝的 DSH 工具名 |
 | `maxDshToolCalls` | `6` | 单次请求内最多执行多少次 DSH 工具 |
@@ -172,7 +186,7 @@ remote_server_timeout = 300
 | `POST /qqpilot/v1/chat/completions` | QQPilot 使用的 OpenAI 兼容端点 |
 | `GET /qqpilot/v1/models` | 模型目录（返回 DSH 当前模型） |
 | `GET /qqpilot/api/config` | 设置页读取配置 / 端点 / 统计 / 运行时长 / 可用 DSH 工具列表 |
-| `POST /qqpilot/api/config` | 设置页写入 `{mode?, compatibilityMode?, extraInstructions?, dshTools?}` |
+| `POST /qqpilot/api/config` | 设置页写入 `{mode?, compatibilityMode?, extraInstructions?, dshTools?, provider?, model?, maxToolRounds?, workspaceRoot?}` |
 | `GET /qqpilot/api/activity?since=&limit=` | 设置页「聊天动态」轮询：最近的消息 + AI 决策 |
 | `POST /qqpilot/api/test` | 设置页“测试连接”：走一遍完整回复流程 |
 | `GET /qqpilot/api/status` | 统计信息 |
@@ -220,7 +234,8 @@ node test/verify.mjs --url http://127.0.0.1:55068/qqpilot/v1
 - 端点注册在 DSH 的 `webServer` 上，默认仅本机可访问；QQPilot 走回环地址，不需要 API key。
   如需从其它机器接入，请在网络层限制访问，并自行评估 `server_url` 使用非回环地址时 QQPilot 会发送
   `Authorization: Bearer <api_key>` 的行为。
-- 目标环境：DSH `0.2.1-rc.2` 系列（使用公开服务 `webServer` / `llm` / `attachments` / `agentDefaultModel`），
+- 目标环境：DSH `0.2.1` / `0.2.2` 系列（使用公开服务 `webServer` / `llm` / `attachments` / `agentDefaultModel` /
+  `agents` / `tools` / `workingDirectory`；工具执行同时兼容 0.2.1 的单调用 API 与 0.2.2 的批量 executor API），
   Node.js `>=22.13.0`。无第三方运行时依赖。
 - 插件卸载/热重载时自动注销所有路由与资源（`ctx.effect` 管理）。
 
@@ -294,6 +309,17 @@ node test/verify.mjs --url http://127.0.0.1:55068/qqpilot/v1
 | 图片组合 | 数组文本 + images 同一回复时，文本多段 + 图片数组均正常返回（单测覆盖） |
 | 兼容性 | 旧的单字符串写法、`[[NEXT]]` 写法、图片回复、工具调用全部回归通过 |
 | 离线单测 | 数组、数组+`[[NEXT]]`、数组+图片 三个新场景 PASS |
+
+### 第六轮（工具轮数 + 工作空间设置）
+
+| 检查 | 结果 |
+|---|---|
+| 设置页 | 「设置 → 工具与工作区」新增：工具轮数上限（1-32）输入 + 保存、工作空间路径 + 保存、当前生效路径显示 |
+| 工具轮数 | POST `{maxToolRounds:8}` → config 立即为 8 并持久化；`99` / `abc` 被拒绝并提示 1-32 |
+| 工作空间 | POST 自定义目录 → 自动创建、`workspaceRoot`/`effectiveWorkspace` 更新；`workingDirectory.set` 应用到 `qqpilot-bridge` Agent（诊断 `appliedAgentWorkspace` 一致） |
+| 非法路径 | 指向普通文件 → `ok:false`「工作空间路径不是目录」；清空 → 恢复跟随 DSH 工作区 |
+| 工具调用回归 | DSH 0.2.2 的批量 executor API 适配后，`read` 自测 2ms 成功（兼容 0.2.1 单调用 API） |
+| 持久化 | `maxToolRounds` / `workspaceRoot` 写入 `~/.dsh/qqpilot-dsh-plugin.json`，重启后保留 |
 
 ## License
 

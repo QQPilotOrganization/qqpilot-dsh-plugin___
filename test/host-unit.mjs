@@ -106,6 +106,17 @@ async function loadPlugin(script, initialState) {
   const llm = makeLlm(script)
   const toolExecutions = []
   const agentCreations = []
+  const workspaceSets = []
+  const fakeWorkingDirectory = {
+    defaultDirectory: process.cwd(),
+    get() {
+      return process.cwd()
+    },
+    set(agent, target) {
+      workspaceSets.push({ agent, target })
+      return Promise.resolve(target)
+    },
+  }
   const fakeAgents = {
     get() {
       return undefined
@@ -139,8 +150,29 @@ async function loadPlugin(script, initialState) {
       ]
     },
     execute(input) {
+      if (Array.isArray(input.calls)) {
+        const call = input.calls[0]
+        toolExecutions.push({ ...call, arguments: JSON.parse(call.arguments), agent: input.agent })
+        return {
+          results: [
+            {
+              callId: call.id,
+              result: {
+                isError: false,
+                value: { ok: true },
+                content: [{ type: 'text', text: `搜索结果(${call.name}): 今日新闻标题` }],
+              },
+            },
+          ],
+          additionalContexts: [],
+          concluded: false,
+        }
+      }
       toolExecutions.push(input)
       return { isError: false, value: { ok: true }, content: [{ type: 'text', text: `搜索结果(${input.name}): 今日新闻标题` }] }
+    },
+    setExecutor() {
+      return () => {}
     },
   }
   const routes = new Map()
@@ -149,6 +181,7 @@ async function loadPlugin(script, initialState) {
       if (name === 'llm') return llm
       if (name === 'tools') return fakeTools
       if (name === 'agents') return fakeAgents
+      if (name === 'workingDirectory') return fakeWorkingDirectory
       if (name === 'agentDefaultModel') return { currentSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-flash' }) }
       return undefined
     },
@@ -167,7 +200,7 @@ async function loadPlugin(script, initialState) {
     },
   }
   apply(ctx, {})
-  return { llm, routes, toolExecutions, agentCreations }
+  return { llm, routes, toolExecutions, agentCreations, workspaceSets }
 }
 
 async function post(routes, path, body) {
@@ -434,6 +467,34 @@ await scenario('tool mode: ordinary bracketed text is not JSON-split', async () 
   ])
   const result = await post(routes, '/qqpilot/v1/chat/completions', qqpilotBody('你好'))
   assert.equal(result.body.choices[0].message.content, '[图片] 我来了喵')
+})
+
+await scenario('tool rounds limit and workspace root are editable', async () => {
+  const { routes, workspaceSets } = await loadPlugin([textChunks('ok')])
+  const rounds = await post(routes, '/qqpilot/api/config', { maxToolRounds: 8 })
+  assert.equal(rounds.body.config.maxToolRounds, 8)
+  const tooBig = await post(routes, '/qqpilot/api/config', { maxToolRounds: 99 })
+  assert.equal(tooBig.body.ok, false)
+  assert.ok(tooBig.body.error.includes('32'))
+  const bad = await post(routes, '/qqpilot/api/config', { maxToolRounds: 'abc' })
+  assert.equal(bad.body.ok, false)
+
+  const workspace = path.join(process.cwd(), '.tmp-test-state', 'custom-ws')
+  const setWorkspace = await post(routes, '/qqpilot/api/config', { workspaceRoot: workspace })
+  assert.equal(setWorkspace.body.ok, true)
+  assert.equal(setWorkspace.body.config.workspaceRoot, path.resolve(workspace))
+  assert.equal(setWorkspace.body.config.effectiveWorkspace, path.resolve(workspace))
+  assert.ok(workspaceSets.some((entry) => entry.target === path.resolve(workspace)), 'bridge agent working directory updated')
+  const cfg = await get(routes, '/qqpilot/api/config')
+  assert.equal(cfg.body.config.effectiveWorkspace, path.resolve(workspace))
+
+  const notDir = await post(routes, '/qqpilot/api/config', { workspaceRoot: path.join(process.cwd(), 'package.json') })
+  assert.equal(notDir.body.ok, false)
+  assert.ok(notDir.body.error)
+
+  const reset = await post(routes, '/qqpilot/api/config', { workspaceRoot: '' })
+  assert.equal(reset.body.config.workspaceRoot, '')
+  assert.equal(reset.body.config.effectiveWorkspace, path.resolve(process.cwd()))
 })
 
 await scenario('compatibility mode: no tools, direct text returned', async () => {
