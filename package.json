@@ -1,6 +1,6 @@
 {
   "name": "qqpilot-dsh-plugin",
-  "version": "0.1.0",
+  "version": "0.1.7",
   "private": true,
   "description": "QQPilot 连接 DeepSeek Harness: OpenAI Chat-Completion 兼容端口 让 DSH 选择是否与如何回复消息, 具有工具调用功能 (reply / stay silent / send images) 附带兼容模式，适用入门级设备运行的本地模型（1B~9B)",
   "license": "MIT",
