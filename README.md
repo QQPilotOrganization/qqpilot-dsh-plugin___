@@ -43,6 +43,9 @@ QQPilot ──POST /qqpilot/v1/chat/completions──▶ 本插件（DSH Host）
   - **DSH 聊天窗口内**：聊天输入框上方常驻一条可折叠的「QQPilot」状态条，显示当前模式、最新一条 QQ 消息与 AI 决策；展开后可看最近 6 条收/发记录（含 DSH 工具调用），每 2 秒自动刷新。
   - **设置页 → 聊天动态**：完整记录视图，支持暂停刷新、查看耗时/token/工具调用与错误。
 - **可调用 DSH 工具**：工具模式下可把 DSH 的工具（默认只读 + 联网：`read` / `glob` / `grep` / `read_image` / `web_search` / `web_fetch`）一并提供给桥接后的 AI；AI 可先查资料/读文件，再用 `qqpilot_reply` 回复。可在设置页选择「关闭 / 安全 / 全部」策略，危险工具（`pwsh` / `bash` / `write` / `edit` / `subagent` / `workflow` / `plugin_manager`）默认拒绝。
+- **多用户上下文（QQPilot 的一次请求可能包含多个用户/多条消息）**：默认「完整上下文」会把请求里的所有用户消息交给模型，
+  并在系统提示里列出本次参与用户与尚未回复的消息（可一次回复多条并 @ 对方）；聊天动态会显示「用户 N 位 / 输入 N 条」。
+  可在设置里切到「旧版单条」只把最后一条用户消息交给模型。
 - **模型选择**：默认跟随 DSH 全局默认模型；设置页「模型」卡片可改为仅 QQPilot 指定的 provider/model（下拉框，保存后下一轮生效），也可在 `cordis.patch.yml` 固定。
 - **工具与工作区设置**：设置页可直接修改「工具轮数上限」（1-32）和桥接 AI 的「工作空间」目录；工作空间用于 DSH 工具（read/写文件等）、相对路径与本地图片路径。
 - **返回图片**：回复图片会被规范化成 `data:image/...;base64,...` 放进
@@ -139,6 +142,30 @@ remote_server_timeout = 300
 > 若使用本地小模型（如 MiniCPM5-1B）并希望多条消息，建议切到**兼容模式**，在 `system.txt` / 附加指令里要求
 > 用 `[[NEXT]]` 或换行分隔——QQPilot 会把它们逐条发送。
 
+## 多用户 / 多消息上下文
+
+QQPilot 不是标准的一问一答 Chat Completion 客户端：它每次把当前聊天窗口的记录整体发过来，所以一个请求的
+`messages` 里可能包含**多个用户**（群聊）或同一用户的多条消息，格式为：
+
+```
+[time] <时间>
+[username] <用户名>
+[content] <内容>
+```
+
+本插件处理方式：
+
+- **完整上下文（`contextMode: all`，默认）**
+  - 请求里的所有 user/assistant 消息都会传给模型（受 `historyLimit` 限制，默认 40 条）；
+  - 系统提示会追加一段“本次请求包含 N 条用户消息，来自 X 位用户：…”以及“最近尚未回复的消息”列表，
+    帮助模型区分谁说了什么、综合全部内容再决定回复；必要时可一次回复多条并 `@用户名`；
+  - 聊天动态/状态条会显示本次请求的参与用户数与输入条数；聊天动态里多条输入会逐条列出「用户名：内容」而不是只显示最后一条。
+- **旧版单条（`contextMode: latest`）**
+  - 只把最后一条 user 消息 + system prompt 交给模型，忽略同一请求里更早的用户/历史消息；
+  - 适合省 token 或想完全复刻旧版行为的场景。
+
+在 **设置 → QQPilot 接入 → 设置 → 工具与工作区 → 上下文模式** 切换，或 `POST /qqpilot/api/config {"contextMode":"all"|"latest"}`。
+
 ## 工具轮数与工作空间
 
 在 **DSH 设置 → QQPilot 接入 → 设置 →「工具与工作区」**：
@@ -165,6 +192,7 @@ remote_server_timeout = 300
 | `extraInstructions` | 空 | 追加到系统指令里的额外要求（三种模式都生效） |
 | `maxToolRounds` | `4` | 工具循环最大轮数（1-32，设置页「工具与工作区」可改） |
 | `workspaceRoot` | 空 | 桥接 AI 的工作空间目录；空 = 跟随 DSH 当前工作区；设置页可改，目录不存在会自动创建 |
+| `contextMode` | `all` | `all` = 完整上下文（参考请求里所有用户/消息）；`latest` = 旧版单条（只把最后一条用户消息交给模型） |
 | `dshTools` | `safe` | 是否向桥接后的 AI 提供 DSH 工具：`off` / `safe`（只读+联网）/ `all`（除危险工具外全部） |
 | `dshToolDeny` | `["pwsh","bash","write","edit","subagent","workflow","plugin_manager"]` | 始终拒绝的 DSH 工具名 |
 | `maxDshToolCalls` | `6` | 单次请求内最多执行多少次 DSH 工具 |
@@ -188,7 +216,7 @@ remote_server_timeout = 300
 | `POST /qqpilot/v1/chat/completions` | QQPilot 使用的 OpenAI 兼容端点 |
 | `GET /qqpilot/v1/models` | 模型目录（返回 DSH 当前模型） |
 | `GET /qqpilot/api/config` | 设置页读取配置 / 端点 / 统计 / 运行时长 / 可用 DSH 工具列表 |
-| `POST /qqpilot/api/config` | 设置页写入 `{mode?, compatibilityMode?, extraInstructions?, dshTools?, provider?, model?, maxToolRounds?, workspaceRoot?}` |
+| `POST /qqpilot/api/config` | 设置页写入 `{mode?, compatibilityMode?, extraInstructions?, dshTools?, provider?, model?, maxToolRounds?, workspaceRoot?, contextMode?}` |
 | `GET /qqpilot/api/activity?since=&limit=` | 设置页「聊天动态」轮询：最近的消息 + AI 决策 |
 | `POST /qqpilot/api/test` | 设置页“测试连接”：走一遍完整回复流程 |
 | `GET /qqpilot/api/status` | 统计信息 |
@@ -327,6 +355,17 @@ node test/verify.mjs --url http://127.0.0.1:55068/qqpilot/v1
 | 持久化 | `maxToolRounds` / `workspaceRoot` 写入 `~/.dsh/qqpilot-dsh-plugin.json`，重启后保留 |
 | 设置页修复 | 修复「工具与工作区」卡片引用未定义的 `roundsDraft` / `workspaceDraft` / `workspaceNotice`（应为 `props.*`），并加 ErrorBoundary：以后渲染异常显示提示而不是整页空白 |
 | 目录选择器 | 工作空间路径旁新增「选择目录…」按钮，调用 DSH `uiWorkspace.pickDirectory()` 打开系统目录选择器，回填路径后保存 |
+
+### 第七轮（多用户上下文 / 旧版单条开关）
+
+| 检查 | 结果 |
+|---|---|
+| 识别多用户请求 | 用真实 `dest.json`（绿叶 / baiyan / 123 三位用户 + 2 条历史 assistant）验证，解析出 `userCount=3`、`participants=[绿叶,baiyan,123]`、`pendingCount=1` |
+| 完整上下文（默认 all） | 模型收到全部 6 条消息；system 追加“本次请求包含 3 条用户消息…”与未回复消息列表；活动记录 `userCount=3/participants=3/pendingCount=1/contextMode=all`；实测回复 `收到，不乞讨！` |
+| 旧版单条（latest） | 模型只收到 system + 最后一条（123）消息；活动记录 `userCount=1/participants=[123]/contextMode=latest`；实测回复正常 |
+| 设置页 | 「工具与工作区 → 上下文模式」新增 完整上下文 / 旧版单条 两个选项，切换即持久化 |
+| 聊天动态 | 多条用户输入时元信息显示「用户 N 位：… / 输入 N 条」 |
+| 离线单测 | 新增 all/latest 两个多用户场景，全部 PASS |
 
 > 若插件热更新时设置页一片空白：这是旧页面里 React 组件实例与新版 hooks 不匹配导致的，刷新页面即可恢复；
 > 新版客户端已加 ErrorBoundary（异常会显示红色提示而不是空白）并把未捕获错误上报到 `/qqpilot/api/client-errors`。

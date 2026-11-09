@@ -232,6 +232,21 @@ function qqpilotBody(userText) {
   }
 }
 
+function multiUserBody() {
+  return {
+    model: 'qwen3.5:0.8b',
+    stream: false,
+    messages: [
+      { role: 'system', content: '你的名字是猫娘 neko，正在与多位用户同时交互。' },
+      { role: 'user', content: '[time]\n11-09 20:19:59\n\n [username] \n 绿叶 \n\n [content] \n 万一呢' },
+      { role: 'assistant', content: '别试，容易被骗' },
+      { role: 'user', content: '[time]\n11-09 20:41:13\n\n [username] \n baiyan \n\n [content] \n [凑近]' },
+      { role: 'assistant', content: '干嘛' },
+      { role: 'user', content: '[time]\n11-09 20:46:13\n\n [username] \n 123 \n\n [content] \n @neko 群里禁止乞讨' },
+    ],
+  }
+}
+
 let failures = 0
 async function scenario(name, fn) {
   try {
@@ -557,6 +572,52 @@ await scenario('legacy state file with compatibilityMode upgrades to compat mode
   const cfg = await get(routes, '/qqpilot/api/config')
   assert.equal(cfg.body.config.mode, 'compat')
   assert.equal(cfg.body.config.compatibilityMode, true)
+})
+
+await scenario('context mode all: every user message reaches the model', async () => {
+  const { routes, llm } = await loadPlugin([toolCallChunks('call_multi_user', 'qqpilot_reply', { text: '收到' })])
+  const cfg = await get(routes, '/qqpilot/api/config')
+  assert.equal(cfg.body.config.contextMode, 'all')
+  const result = await post(routes, '/qqpilot/v1/chat/completions', multiUserBody())
+  assert.equal(result.status, 200)
+  const sent = llm.state.calls[0].messages
+  assert.equal(sent.length, 6, 'system + three users + two assistant history messages')
+  const users = sent.filter((message) => message.role === 'user')
+  assert.equal(users.length, 3, 'all three user messages are preserved')
+  assert.ok(users[0].content[0].text.includes('绿叶'))
+  assert.ok(users[1].content[0].text.includes('baiyan'))
+  assert.ok(users[2].content[0].text.includes('123'))
+  const system = sent.find((message) => message.role === 'system')
+  assert.ok(system.content[0].text.includes('本次请求包含 3 条用户消息'))
+  assert.ok(system.content[0].text.includes('绿叶'))
+  assert.ok(system.content[0].text.includes('尚未回复'))
+  const feed = await get(routes, '/qqpilot/api/activity', 'since=0')
+  const entry = feed.body.activity[0]
+  assert.deepEqual(entry.participants, ['绿叶', 'baiyan', '123'])
+  assert.equal(entry.userCount, 3)
+  assert.equal(entry.pendingCount, 1)
+  assert.equal(entry.contextMode, 'all')
+  assert.equal(entry.incoming.length, 3)
+  assert.equal(entry.incoming[0].sender, '绿叶')
+})
+
+await scenario('context mode latest: legacy last-message-only request', async () => {
+  const { routes, llm } = await loadPlugin([toolCallChunks('call_latest', 'qqpilot_reply', { text: '只回最后一条' })])
+  const set = await post(routes, '/qqpilot/api/config', { contextMode: 'latest' })
+  assert.equal(set.body.config.contextMode, 'latest')
+  const result = await post(routes, '/qqpilot/v1/chat/completions', multiUserBody())
+  assert.equal(result.status, 200)
+  const sent = llm.state.calls[0].messages
+  assert.equal(sent.length, 2, 'system + only the newest user message')
+  const users = sent.filter((message) => message.role === 'user')
+  assert.equal(users.length, 1)
+  assert.ok(users[0].content[0].text.includes('123'))
+  assert.ok(!users[0].content[0].text.includes('绿叶'))
+  const feed = await get(routes, '/qqpilot/api/activity', 'since=0')
+  assert.deepEqual(feed.body.activity[0].participants, ['123'])
+  assert.equal(feed.body.activity[0].userCount, 1)
+  assert.equal(feed.body.activity[0].contextMode, 'latest')
+  assert.equal(feed.body.activity[0].incoming.length, 1)
 })
 
 await scenario('invalid request is refused with 400', async () => {

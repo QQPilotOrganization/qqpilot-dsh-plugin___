@@ -12,3 +12,5 @@
         compatibilityMode: false
         # off | safe (read-only + web) | all (minus dshToolDeny)
         dshTools: safe
+        # all (multi-user request context) | latest (legacy last-message-only)
+        contextMode: all
