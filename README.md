@@ -2,6 +2,16 @@
 
 # qqpilot-dsh-plugin
 
+
+<details>
+<summary>突然有点害怕了</summary>
+
+![alt text](image-1.png)
+
+</details>
+
+
+
 > 把 [QQPilot](https://github.com/QQPilotOrganization/QQPilot) 的 QQ 消息接入 DeepSeek Harness（DSH）的桥接插件：
 > 对 QQPilot 暴露一个 **OpenAI Chat Completion 兼容端点**，由 DSH 里配置的模型通过**智能体工具**决定
 > 「回复什么 / 不回复 / 附带图片」；提供 **工具 / 兼容 / 静默** 三种运行模式，并在设置页内置
@@ -10,6 +20,7 @@
 QQPilot 原本只会把聊天记录 POST 给一个 OpenAI 兼容的 `/chat/completions` 并取回文本。
 本插件接管这个端点后，把请求转成一次 DSH 模型调用，再把模型的决定收敛回 OpenAI 响应：
 ~~这是QQPilot官方认定的正确插件编写方式。~~
+
 
 ```
 QQPilot ──POST /qqpilot/v1/chat/completions──▶ 本插件（DSH Host）
