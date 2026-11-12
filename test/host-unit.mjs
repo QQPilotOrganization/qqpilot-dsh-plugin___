@@ -7,7 +7,7 @@
 
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
-import { mkdirSync, rmSync } from 'node:fs'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 // Keep the plugin's settings state inside the workspace so the offline test
@@ -107,6 +107,33 @@ async function loadPlugin(script, initialState) {
   const toolExecutions = []
   const agentCreations = []
   const workspaceSets = []
+  const helperSpawns = []
+  const fakeSubprocess = {
+    spawn(spec) {
+      helperSpawns.push({ argv: spec.argv, cwd: spec.cwd })
+      let stdout = ''
+      if (/get_chat_name/i.test(spec.argv[0] || '')) {
+        const outIndex = spec.argv.indexOf('-o')
+        if (outIndex >= 0 && spec.argv[outIndex + 1]) {
+          writeFileSync(spec.argv[outIndex + 1], '测试群聊', 'utf8')
+        }
+        stdout = 'E1,2,3,4-1.5\n'
+      } else if (/UploadFiles/i.test(spec.argv[0] || '')) {
+        stdout = '上传 1 个文件 ...\n完成。\n'
+      }
+      const reader = (text) => ({ readFrom: () => ({ text, nextOffset: text.length, lossy: false }) })
+      return {
+        stdin: undefined,
+        stdout: undefined,
+        stderr: undefined,
+        control: undefined,
+        collected: { stdout: reader(stdout), stderr: reader('') },
+        done: Promise.resolve({ exitCode: 0, signal: null }),
+        terminate() {},
+        waitForExit: async () => true,
+      }
+    },
+  }
   const fakeWorkingDirectory = {
     defaultDirectory: process.cwd(),
     get() {
@@ -182,6 +209,7 @@ async function loadPlugin(script, initialState) {
       if (name === 'tools') return fakeTools
       if (name === 'agents') return fakeAgents
       if (name === 'workingDirectory') return fakeWorkingDirectory
+      if (name === 'subprocess') return fakeSubprocess
       if (name === 'agentDefaultModel') return { currentSelection: () => ({ provider: 'deepseek-official', model: 'deepseek-flash' }) }
       return undefined
     },
@@ -200,7 +228,7 @@ async function loadPlugin(script, initialState) {
     },
   }
   apply(ctx, {})
-  return { llm, routes, toolExecutions, agentCreations, workspaceSets }
+  return { llm, routes, toolExecutions, agentCreations, workspaceSets, helperSpawns }
 }
 
 async function post(routes, path, body) {
@@ -510,6 +538,52 @@ await scenario('tool rounds limit and workspace root are editable', async () => 
   const reset = await post(routes, '/qqpilot/api/config', { workspaceRoot: '' })
   assert.equal(reset.body.config.workspaceRoot, '')
   assert.equal(reset.body.config.effectiveWorkspace, path.resolve(process.cwd()))
+})
+
+await scenario('QQPilot DLC helper tools require programs and execute', async () => {
+  const { routes, llm, helperSpawns } = await loadPlugin([
+    toolCallChunks('helper_name', 'qqpilot_get_chat_name', {}),
+    toolCallChunks('helper_upload', 'qqpilot_upload_files', { files: [path.join(process.cwd(), '.tmp-test-state', 'qqpilot-data', 'image.png')] }),
+    toolCallChunks('helper_reply', 'qqpilot_reply', { text: '收到' }),
+  ])
+  const workspace = path.join(process.cwd(), '.tmp-test-state', 'qqpilot-data')
+  const setWs = await post(routes, '/qqpilot/api/config', { workspaceRoot: workspace })
+  assert.equal(setWs.body.ok, true)
+
+  const rejected = await post(routes, '/qqpilot/api/config', { enableGetChatName: true })
+  assert.equal(rejected.body.ok, false)
+  assert.ok(rejected.body.error.includes('get_chat_name.exe'))
+
+  writeFileSync(path.join(workspace, 'get_chat_name.exe'), 'dummy')
+  writeFileSync(path.join(workspace, 'UploadFiles.exe'), 'dummy')
+  writeFileSync(path.join(workspace, 'image.png'), 'dummy')
+  const enabled = await post(routes, '/qqpilot/api/config', {
+    enableGetChatName: true,
+    enableUploadFiles: true,
+  })
+  assert.equal(enabled.body.ok, true)
+  assert.equal(enabled.body.config.enableGetChatName, true)
+  assert.equal(enabled.body.config.enableUploadFiles, true)
+  assert.equal(enabled.body.helperPrograms.getChatName.found, true)
+  assert.equal(enabled.body.helperPrograms.uploadFiles.found, true)
+
+  const result = await post(routes, '/qqpilot/v1/chat/completions', qqpilotBody('看看群名并传图'))
+  assert.equal(result.status, 200)
+  assert.equal(result.body.choices[0].message.content, '收到')
+  const toolNames = llm.state.calls[0].tools.map((tool) => tool.name)
+  assert.ok(toolNames.includes('qqpilot_get_chat_name'))
+  assert.ok(toolNames.includes('qqpilot_upload_files'))
+  assert.equal(helperSpawns.length, 2)
+  assert.ok(/get_chat_name/i.test(helperSpawns[0].argv[0]))
+  assert.equal(helperSpawns[0].cwd, path.resolve(workspace))
+  assert.ok(/UploadFiles/i.test(helperSpawns[1].argv[0]))
+  assert.ok(helperSpawns[1].argv.includes(path.join(workspace, 'image.png')))
+  const secondCallMessages = llm.state.calls[1].messages
+  assert.ok(secondCallMessages.some((message) => message.role === 'tool' && message.content[0].text.includes('测试群聊')))
+  const thirdCallMessages = llm.state.calls[2].messages
+  assert.ok(thirdCallMessages.some((message) => message.role === 'tool' && message.content[0].text.includes('上传 1 个文件')))
+  const feed = await get(routes, '/qqpilot/api/activity', 'since=0')
+  assert.deepEqual(feed.body.activity[0].helpers, ['get_chat_name', 'upload_files'])
 })
 
 await scenario('compatibility mode: no tools, direct text returned', async () => {

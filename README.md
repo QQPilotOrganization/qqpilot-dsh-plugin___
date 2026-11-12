@@ -54,6 +54,10 @@ QQPilot ──POST /qqpilot/v1/chat/completions──▶ 本插件（DSH Host）
   - **DSH 聊天窗口内**：聊天输入框上方常驻一条可折叠的「QQPilot」状态条，显示当前模式、最新一条 QQ 消息与 AI 决策；展开后可看最近 6 条收/发记录（含 DSH 工具调用），每 2 秒自动刷新。
   - **设置页 → 聊天动态**：完整记录视图，支持暂停刷新、查看耗时/token/工具调用与错误。
 - **可调用 DSH 工具**：工具模式下可把 DSH 的工具（默认只读 + 联网：`read` / `glob` / `grep` / `read_image` / `web_search` / `web_fetch`）一并提供给桥接后的 AI；AI 可先查资料/读文件，再用 `qqpilot_reply` 回复。可在设置页选择「关闭 / 安全 / 全部」策略，危险工具（`pwsh` / `bash` / `write` / `edit` / `subagent` / `workflow` / `plugin_manager`）默认拒绝。
+- **QQPilot Windows 辅助程序（DLC，默认关闭）**：可启用两个由工作空间内程序提供的工具 ——
+  `qqpilot_get_chat_name`（调用 `get_chat_name.exe` 用 Windows OCR 读取当前群名）和
+  `qqpilot_upload_files`（调用 `UploadFiles.exe` 上传并立即发送文件）。启用前需确认工作空间指向 QQPilot
+  程序目录（含 exe/config.ini/file.png），设置页会先弹出确认提醒；两者都要求 AI 在最终回复/沉默前调用。
 - **多用户上下文（QQPilot 的一次请求可能包含多个用户/多条消息）**：默认「完整上下文」会把请求里的所有用户消息交给模型，
   并在系统提示里列出本次参与用户与尚未回复的消息（可一次回复多条并 @ 对方）；聊天动态会显示「用户 N 位 / 输入 N 条」。
   可在设置里切到「旧版单条」只把最后一条用户消息交给模型。
@@ -184,6 +188,34 @@ QQPilot 不是标准的一问一答 Chat Completion 客户端：它每次把当�
 
 在 **设置 → QQPilot 接入 → 设置 → 工具与工作区 → 上下文模式** 切换，或 `POST /qqpilot/api/config {"contextMode":"all"|"latest"}`。
 
+## QQPilot 辅助程序（DLC，可选）
+
+Windows 版 QQPilot 的 `data` 目录里带有两个「DLC」程序；本插件可以把它们包装成 AI 工具（**仅工具模式可用**，
+默认关闭）：
+
+| 工具 | 实际程序 | 作用 | 风险 |
+|---|---|---|---|
+| `qqpilot_get_chat_name` | `get_chat_name.exe` | 截图 + Windows OCR 读取当前 QQ 聊天窗口顶部群名/联系人名，帮 AI 确认在哪个会话 | 会截屏、需要 QQ 窗口在前台 |
+| `qqpilot_upload_files` | `UploadFiles.exe` | 把工作空间内文件上传到当前 QQ 聊天 | **会立即发送文件**（可能早于文字回复），会模拟点击 QQ 窗口 |
+
+启用要求：
+
+1. **工作空间必须指向 QQPilot 程序目录**，例如
+   `C:\Users\Develop\QQPilots\QQPilot\releaseBuild\1.5.20 x64 - Copy\data`，目录里要有
+   `get_chat_name.exe` / `UploadFiles.exe` / `config.ini` / `file.png`；
+2. QQ 已登录，并停留在目标聊天窗口（两个程序都依赖窗口坐标和截图）；
+3. 在 **设置 → 工具与工作区 → 工作空间** 里设置上述目录；
+4. 在 **设置 → QQPilot 辅助程序（DLC）** 里打开开关；启用前会二次确认，宿主也会再次校验程序是否存在，
+   缺程序会拒绝启用并提示路径。
+
+调用约定：
+
+- AI 必须在 `qqpilot_reply` / `qqpilot_do_not_reply` **之前**调用这些辅助工具；调用结果会作为工具结果回给模型，
+  模型再决定最终回复或沉默；
+- `qqpilot_get_chat_name` 优先用 `zh-Hans-CN` OCR，语言包不可用时回退到系统默认语言；
+- `qqpilot_upload_files` 只接受位于工作空间或 `imageRoots` 内的文件，单次最多 8 个；
+- 两个工具都有超时（默认 90s），失败会把原因作为工具错误返回给模型，不会中断整轮。
+
 ## 工具轮数与工作空间
 
 在 **DSH 设置 → QQPilot 接入 → 设置 →「工具与工作区」**：
@@ -211,6 +243,8 @@ QQPilot 不是标准的一问一答 Chat Completion 客户端：它每次把当�
 | `maxToolRounds` | `4` | 工具循环最大轮数（1-32，设置页「工具与工作区」可改） |
 | `workspaceRoot` | 空 | 桥接 AI 的工作空间目录；空 = 跟随 DSH 当前工作区；设置页可改，目录不存在会自动创建 |
 | `contextMode` | `all` | `all` = 完整上下文（参考请求里所有用户/消息）；`latest` = 旧版单条（只把最后一条用户消息交给模型） |
+| `enableGetChatName` | `false` | 启用 `qqpilot_get_chat_name`（OCR 群名，需工作空间含 `get_chat_name.exe`） |
+| `enableUploadFiles` | `false` | 启用 `qqpilot_upload_files`（上传文件，需工作空间含 `UploadFiles.exe`） |
 | `dshTools` | `safe` | 是否向桥接后的 AI 提供 DSH 工具：`off` / `safe`（只读+联网）/ `all`（除危险工具外全部） |
 | `dshToolDeny` | `["pwsh","bash","write","edit","subagent","workflow","plugin_manager"]` | 始终拒绝的 DSH 工具名 |
 | `maxDshToolCalls` | `6` | 单次请求内最多执行多少次 DSH 工具 |
@@ -234,7 +268,7 @@ QQPilot 不是标准的一问一答 Chat Completion 客户端：它每次把当�
 | `POST /qqpilot/v1/chat/completions` | QQPilot 使用的 OpenAI 兼容端点 |
 | `GET /qqpilot/v1/models` | 模型目录（返回 DSH 当前模型） |
 | `GET /qqpilot/api/config` | 设置页读取配置 / 端点 / 统计 / 运行时长 / 可用 DSH 工具列表 |
-| `POST /qqpilot/api/config` | 设置页写入 `{mode?, compatibilityMode?, extraInstructions?, dshTools?, provider?, model?, maxToolRounds?, workspaceRoot?, contextMode?}` |
+| `POST /qqpilot/api/config` | 设置页写入 `{mode?, compatibilityMode?, extraInstructions?, dshTools?, provider?, model?, maxToolRounds?, workspaceRoot?, contextMode?, enableGetChatName?, enableUploadFiles?}` |
 | `GET /qqpilot/api/activity?since=&limit=` | 设置页「聊天动态」轮询：最近的消息 + AI 决策 |
 | `POST /qqpilot/api/test` | 设置页“测试连接”：走一遍完整回复流程 |
 | `GET /qqpilot/api/status` | 统计信息 |
@@ -395,6 +429,18 @@ node test/verify.mjs --url http://127.0.0.1:55068/qqpilot/v1
 | 全已回复窗口 | 窗口以 assistant 结尾时 pending=0，系统提示“窗口里的用户消息都已经有回复；除非仍有必要补充，否则保持沉默” |
 | 设计取舍 | 不做跨请求状态缓存（QQPilot 无会话 ID，缓存会串群/私聊）；滑动窗口本身已提供必要的近期上下文，超出窗口的历史按设计丢弃 |
 | 离线单测 | 新增 pending 标记、全已回复窗口断言，全部 PASS |
+
+### 第九轮（QQPilot Windows DLC 工具）
+
+| 检查 | 结果 |
+|---|---|
+| 启用校验 | 工作空间没有 `get_chat_name.exe` / `UploadFiles.exe` 时，POST 启用返回 `ok:false` 并提示 QQPilot data 目录示例 |
+| 设置确认 | 设置页新增「QQPilot 辅助程序（DLC）」卡片：两个开关 + 程序是否存在提示 + 启用二次确认 + 风险说明 |
+| 程序探测 | 工作空间切到 `releaseBuild\1.5.20 x64 - Copy\data` 后，`helperPrograms` 显示两个程序均 found，启用成功 |
+| 工具注入 | 启用后工具模式模型可见 `qqpilot_get_chat_name` / `qqpilot_upload_files`；关闭/缺程序时不注入 |
+| 调用顺序 | 辅助工具不结束回合，模型调用后继续循环，最后必须用 `qqpilot_reply`/`qqpilot_do_not_reply` 收尾；单轮辅助工具上限 4 次 |
+| 参数校验 | UploadFiles 仅允许工作空间/imageRoots 内文件，最多 8 个；OCR 群名失败会返回明确错误文本 |
+| 离线单测 | 启用拒绝、启用成功、两个工具执行、工具结果回喂模型、活动记录 helpers，全部 PASS |
 
 > 若插件热更新时设置页一片空白：这是旧页面里 React 组件实例与新版 hooks 不匹配导致的，刷新页面即可恢复；
 > 新版客户端已加 ErrorBoundary（异常会显示红色提示而不是空白）并把未捕获错误上报到 `/qqpilot/api/client-errors`。

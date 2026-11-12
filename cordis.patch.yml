@@ -14,3 +14,6 @@
         dshTools: safe
         # all (multi-user request context) | latest (legacy last-message-only)
         contextMode: all
+        # Windows QQPilot DLC helper tools (requires workspaceRoot = QQPilot data dir)
+        enableGetChatName: false
+        enableUploadFiles: false
