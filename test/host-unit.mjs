@@ -588,9 +588,10 @@ await scenario('context mode all: every user message reaches the model', async (
   assert.ok(users[1].content[0].text.includes('baiyan'))
   assert.ok(users[2].content[0].text.includes('123'))
   const system = sent.find((message) => message.role === 'system')
-  assert.ok(system.content[0].text.includes('本次请求包含 3 条用户消息'))
+  assert.ok(system.content[0].text.includes('滑动窗口'))
+  assert.ok(system.content[0].text.includes('共 3 条用户消息'))
   assert.ok(system.content[0].text.includes('绿叶'))
-  assert.ok(system.content[0].text.includes('尚未回复'))
+  assert.ok(system.content[0].text.includes('尚未回复的最新消息共 1 条'))
   const feed = await get(routes, '/qqpilot/api/activity', 'since=0')
   const entry = feed.body.activity[0]
   assert.deepEqual(entry.participants, ['绿叶', 'baiyan', '123'])
@@ -599,6 +600,8 @@ await scenario('context mode all: every user message reaches the model', async (
   assert.equal(entry.contextMode, 'all')
   assert.equal(entry.incoming.length, 3)
   assert.equal(entry.incoming[0].sender, '绿叶')
+  assert.equal(entry.incoming[0].pending, false)
+  assert.equal(entry.incoming[2].pending, true)
 })
 
 await scenario('context mode latest: legacy last-message-only request', async () => {
@@ -618,6 +621,21 @@ await scenario('context mode latest: legacy last-message-only request', async ()
   assert.equal(feed.body.activity[0].userCount, 1)
   assert.equal(feed.body.activity[0].contextMode, 'latest')
   assert.equal(feed.body.activity[0].incoming.length, 1)
+  assert.equal(feed.body.activity[0].pendingCount, 1)
+  assert.equal(feed.body.activity[0].incoming[0].pending, true)
+})
+
+await scenario('context mode all: a window with nothing pending says so', async () => {
+  const { routes, llm } = await loadPlugin([toolCallChunks('call_done', 'qqpilot_reply', { text: '好的' })])
+  const body = multiUserBody()
+  body.messages.push({ role: 'assistant', content: '已经回复过了' })
+  await post(routes, '/qqpilot/v1/chat/completions', body)
+  const system = llm.state.calls[0].messages.find((message) => message.role === 'system')
+  assert.ok(system.content[0].text.includes('都已经有回复'))
+  const feed = await get(routes, '/qqpilot/api/activity', 'since=0')
+  assert.equal(feed.body.activity[0].pendingCount, 0)
+  assert.equal(feed.body.activity[0].incoming.length, 3)
+  assert.equal(feed.body.activity[0].incoming.every((item) => item.pending === false), true)
 })
 
 await scenario('invalid request is refused with 400', async () => {
