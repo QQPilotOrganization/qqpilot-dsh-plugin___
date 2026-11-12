@@ -296,6 +296,12 @@ Windows 版 QQPilot 的 `data` 目录里带有两个「DLC」程序；本插件�
 # 离线：用假 ctx / 假 llm 直接跑路由与工具循环（无需安装）
 node test/host-unit.mjs
 
+# 离线：用假 React 渲染设置页三个页签，捕获 props/变量拼写错误
+node test/client-render.mjs
+
+# 一键运行全部离线测试
+pnpm test
+
 # 在线：模拟 QQPilot 发真实请求并严格校验响应形状
 node test/mock-qqpilot.mjs --url http://127.0.0.1:55068/qqpilot/v1
 
@@ -441,6 +447,7 @@ node test/verify.mjs --url http://127.0.0.1:55068/qqpilot/v1
 | 调用顺序 | 辅助工具不结束回合，模型调用后继续循环，最后必须用 `qqpilot_reply`/`qqpilot_do_not_reply` 收尾；单轮辅助工具上限 4 次 |
 | 参数校验 | UploadFiles 仅允许工作空间/imageRoots 内文件，最多 8 个；OCR 群名失败会返回明确错误文本 |
 | 离线单测 | 启用拒绝、启用成功、两个工具执行、工具结果回喂模型、活动记录 helpers，全部 PASS |
+| 设置页修复 | 修复 DLC 卡片引用未定义的 `helperPrograms`（应为 `props.helperPrograms`）；新增 `test/client-render.mjs`，用假 React 渲染概览/聊天动态/设置三个页签，专门捕获这类 props 拼写错误 |
 
 > 若插件热更新时设置页一片空白：这是旧页面里 React 组件实例与新版 hooks 不匹配导致的，刷新页面即可恢复；
 > 新版客户端已加 ErrorBoundary（异常会显示红色提示而不是空白）并把未捕获错误上报到 `/qqpilot/api/client-errors`。

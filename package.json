@@ -32,6 +32,11 @@
       ]
     }
   },
+  "scripts": {
+    "test": "node test/host-unit.mjs && node test/client-render.mjs",
+    "test:host": "node test/host-unit.mjs",
+    "test:client": "node test/client-render.mjs"
+  },
   "engines": {
     "node": ">=22.13.0"
   }
