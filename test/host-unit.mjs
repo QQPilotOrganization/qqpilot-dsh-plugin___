@@ -712,6 +712,123 @@ await scenario('context mode all: a window with nothing pending says so', async 
   assert.equal(feed.body.activity[0].incoming.every((item) => item.pending === false), true)
 })
 
+await scenario('extension request tools: offered in tool mode and handed back', async () => {
+  const { routes, llm } = await loadPlugin([toolCallChunks('call_tts', 'text_to_speech', { text: '你好呀' })])
+  const body = qqpilotBody('用语音回我')
+  body.tools = [
+    {
+      type: 'function',
+      function: {
+        name: 'text_to_speech',
+        description: '把完整回复转成语音',
+        parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] },
+      },
+    },
+  ]
+  body.tool_choice = 'auto'
+
+  const result = await post(routes, '/qqpilot/v1/chat/completions', body)
+  assert.equal(result.status, 200)
+  const choice = result.body.choices[0]
+  const message = choice.message
+  assert.equal(message.role, 'assistant')
+  assert.equal(typeof message.content, 'string')
+  assert.equal(message.content, '')
+  assert.equal(choice.finish_reason, 'tool_calls')
+  assert.equal(Array.isArray(message.tool_calls), true)
+  assert.equal(message.tool_calls.length, 1)
+  assert.equal(message.tool_calls[0].type, 'function')
+  assert.equal(message.tool_calls[0].function.name, 'text_to_speech')
+  assert.deepEqual(JSON.parse(message.tool_calls[0].function.arguments), { text: '你好呀' })
+
+  const sent = llm.state.calls[0]
+  const toolNames = sent.tools.map((tool) => tool.name)
+  assert.ok(toolNames.includes('text_to_speech'), 'extension tool reaches the model')
+  assert.ok(toolNames.includes('qqpilot_reply'), 'bridge tools stay available')
+  const system = sent.messages.find((entry) => entry.role === 'system')
+  assert.ok(system.content[0].text.includes('扩展插件随本次请求提供'))
+  assert.ok(system.content[0].text.includes('text_to_speech'))
+
+  const feed = await get(routes, '/qqpilot/api/activity', 'since=0')
+  const entry = feed.body.activity[0]
+  assert.equal(entry.kind, 'extension')
+  assert.deepEqual(entry.extensionTools, ['text_to_speech'])
+  assert.equal(entry.messages, 0)
+})
+
+await scenario('extension request tools: acceptRequestTools=false ignores them', async () => {
+  const { routes, llm } = await loadPlugin([toolCallChunks('call_tts', 'text_to_speech', { text: 'x' })], {
+    acceptRequestTools: false,
+  })
+  const cfg = await get(routes, '/qqpilot/api/config')
+  assert.equal(cfg.body.config.acceptRequestTools, false)
+
+  const body = qqpilotBody('语音')
+  body.tools = [
+    {
+      type: 'function',
+      function: {
+        name: 'text_to_speech',
+        description: 'TTS',
+        parameters: { type: 'object', properties: { text: { type: 'string' } } },
+      },
+    },
+  ]
+  const result = await post(routes, '/qqpilot/v1/chat/completions', body)
+  assert.equal(result.status, 200)
+  assert.equal(result.body.choices[0].message.tool_calls, undefined)
+  const toolNames = llm.state.calls[0].tools.map((tool) => tool.name)
+  assert.ok(!toolNames.includes('text_to_speech'), 'disabled: extension tool not offered')
+  const feed = await get(routes, '/qqpilot/api/activity', 'since=0')
+  assert.notEqual(feed.body.activity[0].kind, 'extension')
+})
+
+await scenario('extension request tools: reserved and duplicate names are filtered', async () => {
+  const { routes, llm } = await loadPlugin([toolCallChunks('call_reply', 'qqpilot_reply', { text: '好' })])
+  const body = qqpilotBody('测试去重')
+  body.tools = [
+    {
+      type: 'function',
+      function: { name: 'qqpilot_reply', description: 'shadow attempt', parameters: { type: 'object', properties: {} } },
+    },
+    {
+      type: 'function',
+      function: { name: 'read', description: 'shadow DSH read', parameters: { type: 'object', properties: {} } },
+    },
+    {
+      type: 'function',
+      function: { name: 'text_to_speech', description: 'TTS', parameters: { type: 'object', properties: {} } },
+    },
+    {
+      type: 'function',
+      function: { name: 'text_to_speech', description: 'TTS duplicate', parameters: { type: 'object', properties: {} } },
+    },
+    { type: 'function', function: { name: '../bad name', description: 'invalid', parameters: {} } },
+  ]
+  await post(routes, '/qqpilot/v1/chat/completions', body)
+  const toolNames = llm.state.calls[0].tools.map((tool) => tool.name)
+  assert.equal(toolNames.filter((name) => name === 'qqpilot_reply').length, 1, 'reserved name is not duplicated')
+  assert.equal(toolNames.filter((name) => name === 'read').length, 1, 'DSH tool wins the collision')
+  assert.equal(toolNames.filter((name) => name === 'text_to_speech').length, 1, 'duplicate extension tool removed')
+  assert.ok(!toolNames.includes('../bad name'), 'invalid tool name rejected')
+})
+
+await scenario('extension request tools: compatibility mode never exposes them', async () => {
+  const { routes, llm } = await loadPlugin([textChunks('兼容输出')])
+  await post(routes, '/qqpilot/api/config', { compatibilityMode: true })
+  const body = qqpilotBody('你好')
+  body.tools = [
+    {
+      type: 'function',
+      function: { name: 'text_to_speech', description: 'TTS', parameters: { type: 'object', properties: {} } },
+    },
+  ]
+  const result = await post(routes, '/qqpilot/v1/chat/completions', body)
+  assert.equal(result.body.choices[0].message.content, '兼容输出')
+  assert.equal(llm.state.calls[0].tools, undefined)
+})
+
+
 await scenario('invalid request is refused with 400', async () => {
   const { routes } = await loadPlugin([textChunks('x')])
   const result = await post(routes, '/qqpilot/v1/chat/completions', { model: 'x' })

@@ -345,7 +345,8 @@ main.rs:405-408  再等 4 秒后 Ctrl+Enter（聊天框里的最终发送）
    `object:"chat.completion"`、`model`、`usage` 都只是锦上添花；不要包 content-parts 数组。
 2. **工具模式（reply/silence 工具循环）**：插件内部可以自由调 LLM、解析 tool_calls，但
    对 QQPilot 的**出口必须收敛成同一形状**：一个字符串 `content` + 可选 `message.images[]`
-   数组。绝不能把 `tool_calls`、`content:null` 或分段数组直接透传给 QQPilot。
+   数组。绝不能把 `tool_calls`、`content:null` 或分段数组直接透传给 QQPilot
+   （唯一例外是链路里插入了扩展插件，见 5.9）。
 3. **静默**：工具模式判定"不说话"时返回 `content: ""`（字符串），QQPilot 会跳过发送。
 4. **图片**：工具模式拿到的图片（`ctx.attachments` 等）要归一化成
    `data:image/<ext>;base64,<payload>` 放进 `message.images[i].image_url.url`；
@@ -355,6 +356,23 @@ main.rs:405-408  再等 4 秒后 Ctrl+Enter（聊天框里的最终发送）
 7. **体积**：请求可能含最多 12 张 base64 图片；响应要单次 JSON、300 秒内返回。
 8. **错误处理**：任何 4xx/5xx/非法 JSON 都会让 QQPilot 静默失败（用户侧表现为"机器人不理人"），
    所以插件应尽量 200 + 明确 content 或空 content，把错误写进日志。
+
+### 5.9 扩展插件请求工具（tool_calls 回传）
+
+QQPilot 的请求体固定只有 `model` / `messages` / `stream`，外加 `extra.json` 的顶层覆盖；它**不会**发送
+`tools`。但扩展插件可以在 QQPilot 与本插件之间再插一跳（QQPilot → 扩展 → 本插件），扩展在转发时注入
+`tools`（例如 qqpilot-easy-audio 的 `text_to_speech`）。本插件的约定：
+
+- 只有工具模式读取 `body.tools`；兼容 / 静默模式忽略。
+- 工具名与 `qqpilot_*` 或 DSH 工具名冲突时被丢弃；单次最多 8 个。
+- 模型调用扩展工具**不执行**，响应为
+  `choices[0].message = { role:"assistant", content:"<字符串>", tool_calls:[{id,type:"function",
+  function:{name,arguments}}] }`，`finish_reason:"tool_calls"`。
+- QQPilot 侧只读 `content` / `images` / `audios` / `files`，`tool_calls` 会被忽略；消费它的是链路里的扩展
+  插件。easy-audio 的 `chat.rs::rewrite_tool` 会按 `function/name == "text_to_speech"` 精确匹配第一个调用，
+  合成后删除该 tool_call、把 `content` 置空并写入 `message.audios[]`。
+- 因此扩展工具调用与 `qqpilot_reply` 不能在同一个响应里同时生效：扩展优先，文本作废（`content` 仍保留
+  模型文字，作为合成失败时的回退）。
 
 ---
 

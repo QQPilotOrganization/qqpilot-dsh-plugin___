@@ -58,6 +58,9 @@ QQPilot ──POST /qqpilot/v1/chat/completions──▶ 本插件（DSH Host）
   `qqpilot_get_chat_name`（调用 `get_chat_name.exe` 用 Windows OCR 读取当前群名）和
   `qqpilot_upload_files`（调用 `UploadFiles.exe` 上传并立即发送文件）。启用前需确认工作空间指向 QQPilot
   程序目录（含 exe/config.ini/file.png），设置页会先弹出确认提醒；两者都要求 AI 在最终回复/沉默前调用。
+- **扩展插件工具（请求传递，工具模式，默认开启）**：扩展插件（如 `qqpilot-easy-audio` 的 `tool` 模式）把
+  函数工具（如 `text_to_speech`）随请求转发给本插件时，工具模式会把这些工具一并提供给模型；模型调用时
+  插件**不执行**，而是把调用原样回传（`choices[0].message.tool_calls[]`）给链路里的扩展插件完成后续处理。
 - **多用户上下文（QQPilot 的一次请求可能包含多个用户/多条消息）**：默认「完整上下文」会把请求里的所有用户消息交给模型，
   并在系统提示里列出本次参与用户与尚未回复的消息（可一次回复多条并 @ 对方）；聊天动态会显示「用户 N 位 / 输入 N 条」。
   可在设置里切到「旧版单条」只把最后一条用户消息交给模型。
@@ -216,6 +219,39 @@ Windows 版 QQPilot 的 `data` 目录里带有两个「DLC」程序；本插件�
 - `qqpilot_upload_files` 只接受位于工作空间或 `imageRoots` 内的文件，单次最多 8 个；
 - 两个工具都有超时（默认 90s），失败会把原因作为工具错误返回给模型，不会中断整轮。
 
+## 扩展插件工具（请求传递，工具模式）
+
+QQPilot 本身不会在请求里带 `tools`。扩展插件（例如 `qqpilot-easy-audio` 的 `tool` 模式）可以在把请求
+转发给本插件时，往 `body.tools` 里追加函数工具（如 `text_to_speech`）。本插件在工具模式下会：
+
+1. 解析请求里的 `tools`（只接受 `type:"function"`；也兼容裸 `{name, description, parameters}`），过滤掉
+   与本插件 / DSH 重名的工具（`qqpilot_reply`、`qqpilot_do_not_reply`、`qqpilot_get_chat_name`、
+   `qqpilot_upload_files`、DSH 工具名）和非法名字，单次最多 8 个（`maxRequestTools`）；
+2. 把这些工具和 `qqpilot_reply` 一起交给模型，并在系统提示里说明“由扩展处理、调用即结束本轮”；
+3. 模型调用扩展工具时**不执行**，而是把调用原样放进响应的
+   `choices[0].message.tool_calls[]`（`finish_reason: "tool_calls"`，`content` 保留模型文字作为
+   扩展合成失败时的回退），由链路里的扩展插件接手（例如 easy-audio 合成语音后改写为 `audios[]`）。
+
+接线方式（扩展必须在 QQPilot 与 DSH 之间）：
+
+```
+QQPilot ──▶ 扩展插件（如 easy-audio，tool 模式）──▶ 本插件 ──▶ DSH 模型
+              ▲ 往请求里注入 text_to_speech              │
+              └──── tool_calls 原样回传，扩展合成 audios ◀┘
+```
+
+要点与限制：
+
+- 只有**工具模式**生效；兼容模式 / 静默模式不会向模型提供任何工具，也不会读取请求里的 `tools`。
+- `tool_choice` 不生效：最终由模型自己决定是否调用扩展工具（easy-audio 建议用 `auto`）。
+- 一次请求只回传第一个扩展工具调用；调用后本轮结束。模型同时调用 `qqpilot_reply` 时以扩展工具为准。
+- 扩展工具调用不计入 DSH 工具 / 辅助工具的调用次数上限，也不会在宿主执行任何代码。
+- QQPilot 本身会忽略响应里的 `tool_calls`（它只读 `content` / `images` / `audios` / `files`）；只有链路里的
+  扩展插件会消费它。若直连 QQPilot 而请求里又恰好带了 `tools`，用户侧看到的仍是 `content` 文本。
+- 聊天动态里这类请求显示「转交扩展」徽章与「扩展工具：<名字>」。
+- 关闭：`POST /qqpilot/api/config {"acceptRequestTools": false}`，或设置页「扩展插件工具（请求传递）」开关。
+
+
 ## 工具轮数与工作空间
 
 在 **DSH 设置 → QQPilot 接入 → 设置 →「工具与工作区」**：
@@ -248,6 +284,8 @@ Windows 版 QQPilot 的 `data` 目录里带有两个「DLC」程序；本插件�
 | `dshTools` | `safe` | 是否向桥接后的 AI 提供 DSH 工具：`off` / `safe`（只读+联网）/ `all`（除危险工具外全部） |
 | `dshToolDeny` | `["pwsh","bash","write","edit","subagent","workflow","plugin_manager"]` | 始终拒绝的 DSH 工具名 |
 | `maxDshToolCalls` | `6` | 单次请求内最多执行多少次 DSH 工具 |
+| `acceptRequestTools` | `true` | 工具模式下接受扩展插件随请求传入的 `tools`，把模型对它们的调用原样回传（不执行）；关闭后忽略请求里的工具 |
+| `maxRequestTools` | `8` | 每次请求最多接受多少个扩展工具 |
 | `historyLimit` | `40` | 最多转发的历史消息条数 |
 | `requestTimeoutMs` | `180000` | 单次请求的模型调用超时（毫秒） |
 | `fallbackToCompat` | `true` | 工具模式调用报错时是否回退为兼容输出 |
@@ -268,7 +306,7 @@ Windows 版 QQPilot 的 `data` 目录里带有两个「DLC」程序；本插件�
 | `POST /qqpilot/v1/chat/completions` | QQPilot 使用的 OpenAI 兼容端点 |
 | `GET /qqpilot/v1/models` | 模型目录（返回 DSH 当前模型） |
 | `GET /qqpilot/api/config` | 设置页读取配置 / 端点 / 统计 / 运行时长 / 可用 DSH 工具列表 |
-| `POST /qqpilot/api/config` | 设置页写入 `{mode?, compatibilityMode?, extraInstructions?, dshTools?, provider?, model?, maxToolRounds?, workspaceRoot?, contextMode?, enableGetChatName?, enableUploadFiles?}` |
+| `POST /qqpilot/api/config` | 设置页写入 `{mode?, compatibilityMode?, extraInstructions?, dshTools?, acceptRequestTools?, provider?, model?, maxToolRounds?, workspaceRoot?, contextMode?, enableGetChatName?, enableUploadFiles?}` |
 | `GET /qqpilot/api/activity?since=&limit=` | 设置页「聊天动态」轮询：最近的消息 + AI 决策 |
 | `POST /qqpilot/api/test` | 设置页“测试连接”：走一遍完整回复流程 |
 | `GET /qqpilot/api/status` | 统计信息 |
@@ -288,6 +326,8 @@ Windows 版 QQPilot 的 `data` 目录里带有两个「DLC」程序；本插件�
 - 回复文本会被 QQPilot 硬截断到 500 字符（按 Unicode 字符计），图片会在文本之后上传。
 - 图片放在非标准扩展字段 `choices[0].message.images[]`，值必须是 `data:image/<ext>;base64,...` data URL；
   文本为空时 QQPilot 不会上传图片，因此插件会在“只有图片”时补 caption。
+- **扩展工具回传**：模型调用扩展插件注入的工具时，响应是 `content`（字符串）+ `message.tool_calls[]`
+  （`finish_reason:"tool_calls"`）；这份 `tool_calls` 是给链路里扩展插件的，QQPilot 自己不读它。
 - 更精确的协议依据（源码行号、字段硬性要求、失败时的静默行为）见 [PROTOCOL.md](docs/PROTOCOL.md)。
 
 ## 验证
@@ -451,6 +491,19 @@ node test/verify.mjs --url http://127.0.0.1:55068/qqpilot/v1
 
 > 若插件热更新时设置页一片空白：这是旧页面里 React 组件实例与新版 hooks 不匹配导致的，刷新页面即可恢复；
 > 新版客户端已加 ErrorBoundary（异常会显示红色提示而不是空白）并把未捕获错误上报到 `/qqpilot/api/client-errors`。
+
+### 第十轮（扩展插件请求工具传递）
+
+| 检查 | 结果 |
+|---|---|
+| 请求工具解析 | `body.tools` 里的 `text_to_speech` 被加入工具模式工具列表，系统提示说明“由扩展处理、调用即结束本轮”；保留名 / 重复名 / 非法名被过滤 |
+| 调用回传 | 模型调用扩展工具 → `content:""`（模型文字作回退）+ `tool_calls[text_to_speech]` + `finish_reason:"tool_calls"`，与 easy-audio `chat.rs` 的改写逻辑匹配 |
+| 开关 | `acceptRequestTools` 默认 `true`；设为 `false` 后不再向模型提供扩展工具；兼容 / 静默模式始终不提供 |
+| 聊天动态 | 新增 `kind:"extension"` 与 `extensionTools`；设置页与状态条显示「转交扩展」与「扩展工具：<名字>」 |
+| 离线单测 | 回传、禁用、去重 / 保留名、兼容模式 4 个场景 PASS；`client-render` 覆盖新卡片与转交行 |
+
+> 链路顺序很关键：扩展插件必须在 QQPilot 与本插件之间（QQPilot → easy-audio → 本插件）；本插件在
+> 扩展前面时，easy-audio 会自己消费 `text_to_speech`，本插件看不到这次调用。详见 [note.md](note.md)。
 
 ## License
 

@@ -48,6 +48,7 @@ const config = {
   fallbackToCompat: true,
   dshTools: 'safe',
   maxDshToolCalls: 6,
+  acceptRequestTools: true,
   workspaceRoot: 'C:\\QQPilot\\data',
   effectiveWorkspace: 'C:\\QQPilot\\data',
   contextMode: 'all',
@@ -112,7 +113,23 @@ function renderSettings(tab) {
     roundsDraft: '4',
     workspaceDraft: '',
     workspaceNotice: null,
-    activity: [],
+    activity: [
+      {
+        id: 1,
+        at: Date.now(),
+        mode: 'agent',
+        kind: 'extension',
+        sender: 'Alice',
+        text: '用语音回我',
+        reply: '',
+        images: 0,
+        messages: 0,
+        extensionTools: ['text_to_speech'],
+        helpers: [],
+        tools: [],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      },
+    ],
     paused: false,
     activityStatus: 'ok',
     activityError: null,
@@ -173,4 +190,7 @@ assert.ok(rendered.settings.includes('工具与工作区'), 'settings tab render
 assert.ok(rendered.settings.includes('QQPilot 辅助程序（DLC）'), 'settings tab renders DLC card')
 assert.ok(rendered.settings.includes('OCR 读取群名'), 'DLC card renders OCR row')
 assert.ok(rendered.settings.includes('上传文件'), 'DLC card renders upload row')
+assert.ok(rendered.settings.includes('扩展插件工具（请求传递）'), 'settings tab renders extension tools card')
+assert.ok(rendered.activity.includes('转交扩展'), 'activity row renders extension badge')
+assert.ok(rendered.activity.includes('扩展工具：text_to_speech'), 'activity row lists extension tool')
 console.log('CLIENT RENDER SMOKE PASS (overview / activity / settings)')

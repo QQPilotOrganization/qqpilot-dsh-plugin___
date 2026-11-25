@@ -14,6 +14,9 @@
         dshTools: safe
         # all (multi-user request context) | latest (legacy last-message-only)
         contextMode: all
+        # accept tools an upstream extension (e.g. qqpilot-easy-audio) adds to
+        # the request body in tool mode; calls are handed back, never executed
+        acceptRequestTools: true
         # Windows QQPilot DLC helper tools (requires workspaceRoot = QQPilot data dir)
         enableGetChatName: false
         enableUploadFiles: false
